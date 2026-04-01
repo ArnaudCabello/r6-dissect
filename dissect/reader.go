@@ -43,7 +43,13 @@ type Reader struct {
 	skoposClonePositions     []PlayerPosition
 	skoposUsername           string
 	playerNameOffsets        map[string]int // username → byte offset of name in file
+	timeSamples              []timeSample   // (offset, gameClock) from time packets
 	Scoreboard               Scoreboard
+}
+
+type timeSample struct {
+	offset    int
+	gameClock float64
 }
 
 // NewReader decompresses in using zstd and

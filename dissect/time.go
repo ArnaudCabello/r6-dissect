@@ -18,6 +18,7 @@ func readTime(r *Reader) error {
 	if float64(time) > r.maxTimeValue {
 		r.maxTimeValue = float64(time)
 	}
+	r.timeSamples = append(r.timeSamples, timeSample{offset: r.offset, gameClock: float64(time)})
 	return nil
 }
 

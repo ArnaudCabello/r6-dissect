@@ -27,6 +27,8 @@ select { padding: 2px 6px; background: #21262d; color: #e6edf3; border: 1px soli
 .floor-tab:hover { background: #30363d; }
 .floor-tab.active { background: #0d1117; border-bottom-color: #0d1117; color: #58a6ff; }
 #floors-container { flex: 1; display: flex; gap: 4px; padding: 4px; overflow: hidden; position: relative; }
+#ingame-timer { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 20; background: rgba(13,17,23,0.85); border: 1px solid #30363d; border-radius: 6px; padding: 4px 14px; font-size: 16px; font-weight: bold; font-variant-numeric: tabular-nums; color: #e6edf3; pointer-events: none; text-align: center; min-width: 90px; }
+#ingame-timer .phase-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
 .floor-view { flex: 1; position: relative; overflow: hidden; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; cursor: grab; min-width: 0; transition: flex 0.3s; }
 .floor-view.focused { flex: 3; }
 .floor-view.minimized { flex: 0; min-width: 60px; max-width: 60px; }
@@ -70,7 +72,7 @@ select { padding: 2px 6px; background: #21262d; color: #e6edf3; border: 1px soli
     <div id="player-panel"><div id="site-info" style="font-size:11px;color:#58a6ff;padding:4px 0 6px;border-bottom:1px solid #30363d;margin-bottom:6px;display:none"></div><h3>Players</h3><div id="player-list"></div></div>
     <div id="map-area">
         <div id="floor-tabs"></div>
-        <div id="floors-container"></div>
+        <div id="floors-container"><div id="ingame-timer"><div class="phase-label">PREP</div><div id="ingame-time">0:45</div></div></div>
     </div>
     <div id="event-panel"><h3>Events</h3><div id="event-list"></div></div>
 </div>
@@ -101,6 +103,10 @@ let playerColors = {}, playerVisible = {};
 let playerPaths = {}; // username -> [{x,y,z,floor}...]
 let activities = [];
 let playing = false, playSpeed = 1, playTime = 0, roundDuration = 131, lastAnimTime = 0;
+let prepEndTime = 45; // elapsed seconds when prep ends (detected from data)
+const ACTION_TIMER_START = 179; // in-game action timer always starts at 2:59
+let gameClockMap = []; // [{t: elapsed, clock: gameClock}] sorted by elapsed
+let actionClockMap = []; // action-phase subset of gameClockMap
 let totalFrames = 1000, playFrame = 0; // kept for timeline slider
 let focusedFloor = null; // null = all visible
 let hiddenFloors = new Set(); // floors explicitly hidden by user
@@ -187,7 +193,11 @@ function gameToPixelFloor(gx, gy, floorGeo) {
 // === BUILD FLOOR VIEWS ===
 function buildFloorViews(floors) {
     const container = document.getElementById('floors-container');
+    const timerNode = document.getElementById('ingame-timer');
+    if(timerNode) timerNode.remove();
     container.innerHTML = '';
+    if(timerNode) container.appendChild(timerNode);
+    else container.insertAdjacentHTML('beforeend','<div id="ingame-timer"><div class="phase-label">PREP</div><div id="ingame-time">0:45</div></div>');
     const tabs = document.getElementById('floor-tabs');
     tabs.innerHTML = '';
     floorCanvases = {};
@@ -289,7 +299,15 @@ function updateFloorFocus() {
 function processData() {
     if(!posData) return;
     playerPaths = {};
-    roundDuration = posData.roundDuration || posData._maxTime || 131;
+    // Compute roundDuration from max position elapsed time
+    let maxPosTime = 0;
+    for(const[user,posArr]of Object.entries(posData.playerPositions||{})){
+        for(const p of posArr){
+            const t = p.t || p.timeInSeconds || 0;
+            if(t > maxPosTime) maxPosTime = t;
+        }
+    }
+    roundDuration = maxPosTime > 0 ? maxPosTime : (posData.roundDuration || posData._maxTime || 131);
     for(const[user,posArr]of Object.entries(posData.playerPositions||{})){
         let pts = posArr.filter(p=>(Math.abs(p.x)>1||Math.abs(p.y)>1)&&p.z>-50);
         const clean = pts.length ? [pts[0]] : [];
@@ -302,13 +320,56 @@ function processData() {
     }
     activities = posData.activities || [];
 
-    // Extract death times from matchFeedback
+    // Build gameClock-to-elapsed mapping from position data
+    // gameClock values come from real .rec time packets
+    gameClockMap = []; // sorted by elapsed, [{t, clock}]
+    for(const[user,posArr]of Object.entries(posData.playerPositions||{})){
+        for(const p of posArr){
+            const gc = p.gameClock;
+            if(gc !== undefined && gc !== null){
+                gameClockMap.push({t: p.t || p.timeInSeconds || 0, clock: gc});
+            }
+        }
+    }
+    gameClockMap.sort((a,b) => a.t - b.t);
+    // Deduplicate: keep one sample per ~0.5 elapsed second
+    if(gameClockMap.length > 0){
+        const deduped = [gameClockMap[0]];
+        for(let i=1;i<gameClockMap.length;i++){
+            if(gameClockMap[i].t - deduped[deduped.length-1].t >= 0.5) deduped.push(gameClockMap[i]);
+        }
+        gameClockMap = deduped;
+    }
+
+    // Detect prep end: find the gameClock jump (from low prep values back up to ~179)
+    prepEndTime = 45; // default
+    for(let i=1;i<gameClockMap.length;i++){
+        if(gameClockMap[i].clock - gameClockMap[i-1].clock > 50){
+            prepEndTime = gameClockMap[i].t;
+            break;
+        }
+    }
+
+    // Build action-phase-only clock samples (elapsed >= prepEndTime)
+    actionClockMap = gameClockMap.filter(s => s.t >= prepEndTime);
+
+    // Extract death times from position data: when the player stops moving
     playerDeathTimes = {};
     for(const evt of (posData.matchFeedback||[])){
-        if(evt.type && evt.type.name === 'Kill' && evt.target){
-            // timeInSeconds is remaining time (countdown), convert to elapsed
-            const elapsed = roundDuration - (evt.timeInSeconds||0);
-            playerDeathTimes[evt.target] = elapsed;
+        if(evt.type && (evt.type.name === 'Kill' || evt.type.name === 'Death')){
+            const target = evt.target || evt.username;
+            const path = playerPaths[target];
+            if(path && path.length > 1){
+                // Find the last position with meaningful movement
+                let lastMovingIdx = 0;
+                for(let i=1;i<path.length;i++){
+                    const dx=path[i].x-path[i-1].x, dy=path[i].y-path[i-1].y;
+                    if(Math.sqrt(dx*dx+dy*dy) > 0.05) lastMovingIdx = i;
+                }
+                playerDeathTimes[target] = path[lastMovingIdx].t;
+            } else if(path && path.length === 1){
+                playerDeathTimes[target] = path[0].t;
+            }
         }
     }
 
@@ -467,6 +528,36 @@ function updateTimeDisplay(){
     const remaining = roundDuration - playTime;
     const m=Math.floor(remaining/60), s=Math.floor(remaining%60);
     document.getElementById('time-display').textContent=`${m}:${s.toString().padStart(2,'0')}`;
+    // In-game timer: prep phase (0:45->0:00) then action phase (countdown)
+    const timerEl = document.getElementById('ingame-time');
+    const labelEl = document.querySelector('#ingame-timer .phase-label');
+    if(!timerEl || !labelEl) return;
+    if(playTime < prepEndTime){
+        // Prep phase: count down from 0:45 to 0:00
+        const prepTotal = 45; // in-game prep is always 45s display
+        const prepFrac = playTime / prepEndTime;
+        const prepRemain = Math.ceil(prepTotal * (1 - prepFrac));
+        const ps = Math.min(prepRemain, prepTotal);
+        labelEl.textContent = 'PREP';
+        labelEl.style.color = '#ffd43b';
+        timerEl.textContent = `0:${ps.toString().padStart(2,'0')}`;
+    } else {
+        // Action phase: look up real game clock from action-phase position data
+        let clock = Math.max(0, ACTION_TIMER_START - (playTime - prepEndTime)); // fallback
+        // Binary search gameClockMap for current playTime (only action entries)
+        let lo=0, hi=gameClockMap.length-1;
+        while(lo<=hi){
+            const mid=(lo+hi)>>1;
+            if(gameClockMap[mid].t<=playTime) lo=mid+1; else hi=mid-1;
+        }
+        if(hi>=0 && hi<gameClockMap.length && gameClockMap[hi].t >= prepEndTime){
+            clock = gameClockMap[hi].clock;
+        }
+        const am=Math.floor(clock/60), as_=Math.floor(clock%60);
+        labelEl.textContent = 'ACTION';
+        labelEl.style.color = '#8b949e';
+        timerEl.textContent = `${am}:${as_.toString().padStart(2,'0')}`;
+    }
 }
 document.getElementById('play-btn').addEventListener('click',()=>{playing=!playing;document.getElementById('play-btn').textContent=playing?'\u275A\u275A':'\u25B6';if(playing){lastAnimTime=0;requestAnimationFrame(animate);}});
 document.getElementById('timeline').addEventListener('input',e=>{playFrame=parseInt(e.target.value);playTime=playFrame/10;updateTimeDisplay();drawFrame();});
@@ -546,16 +637,48 @@ function buildLoadoutBar(){
     }
 }
 function buildEventList(){
-    const list=document.getElementById('event-list');list.innerHTML='';const mt=posData._maxTime||45;
+    const list=document.getElementById('event-list');list.innerHTML='';
+
+    // Collect all events: activities + kills
+    const allEvents = [];
     for(const act of activities){
         if(Math.abs(act.x)<1&&Math.abs(act.y)<1)continue;
-        const elapsed = act.elapsed || (mt - act.timeInSeconds);
-        const div=document.createElement('div');div.className='event-item';div.dataset.elapsed=elapsed;
-        const fl=getFloorForZ(act.z);
-        const time=document.createElement('span');time.className='time';time.textContent=act.time;
-        const text=document.createElement('span');text.textContent=`${FLOOR_LABELS[fl]||fl} ${act.type} +${act.scoreDelta}`;
-        div.append(time,text);
-        div.addEventListener('click',()=>{playTime=elapsed;playFrame=Math.round(playTime*10);document.getElementById('timeline').value=playFrame;updateTimeDisplay();drawFrame();});
+        const elapsed = act.elapsed || (roundDuration - act.timeInSeconds);
+        allEvents.push({kind:'activity', elapsed, data:act});
+    }
+    for(const evt of (posData.matchFeedback||[])){
+        if(evt.type && (evt.type.name === 'Kill' || evt.type.name === 'Death')){
+            const target = evt.target || evt.username;
+            const elapsed = playerDeathTimes[target] !== undefined ? playerDeathTimes[target] : (roundDuration - (evt.timeInSeconds||0));
+            allEvents.push({kind:'kill', elapsed, data:evt});
+        }
+    }
+    allEvents.sort((a,b) => a.elapsed - b.elapsed);
+
+    for(const e of allEvents){
+        const div=document.createElement('div');div.className='event-item';div.dataset.elapsed=e.elapsed;
+        const time=document.createElement('span');time.className='time';
+        if(e.kind==='activity'){
+            const act=e.data;
+            const fl=getFloorForZ(act.z);
+            time.textContent=act.time;
+            const text=document.createElement('span');text.textContent=`${FLOOR_LABELS[fl]||fl} ${act.type} +${act.scoreDelta}`;
+            div.append(time,text);
+        } else {
+            const evt=e.data;
+            time.textContent=evt.time;
+            const text=document.createElement('span');
+            if(evt.type.name==='Kill'){
+                const hs = evt.headshot ? ' \u{1F3AF}' : '';
+                text.innerHTML=`<span style="color:${playerColors[evt.username]||'#eee'}">${evt.username}</span> \u2192 <span style="color:${playerColors[evt.target]||'#eee'}">${evt.target}</span>${hs}`;
+            } else {
+                text.textContent=`${evt.username} died`;
+            }
+            text.style.fontSize='9px';
+            div.style.opacity='1';div.style.borderLeft='2px solid #ff4444';
+            div.append(time,text);
+        }
+        div.addEventListener('click',()=>{playTime=e.elapsed;playFrame=Math.round(playTime*10);document.getElementById('timeline').value=playFrame;updateTimeDisplay();drawFrame();});
         list.appendChild(div);
     }
 }

@@ -18,6 +18,7 @@ type PlayerPosition struct {
 	Z             float32 `json:"z"`
 	Time          string  `json:"time"`
 	TimeInSeconds float64 `json:"timeInSeconds"`
+	GameClock     float64 `json:"gameClock"` // real game timer value from .rec time packets
 	offset        int     // byte offset in data stream, used for ordering
 }
 
@@ -136,6 +137,7 @@ func readPosition(r *Reader) error {
 		Z:             z,
 		Time:          r.timeRaw,
 		TimeInSeconds: r.time,
+		GameClock:     r.time,
 		offset:        r.offset,
 	}
 
@@ -1214,10 +1216,19 @@ func (r *Reader) interpolatePositionTimes() {
 		duration = 180 // 3 minutes default
 	}
 
+	// Build game clock mapping from time samples.
+	// Time samples and positions occupy separate byte regions, so we map
+	// by normalized fraction: position fraction -> time sample index.
+	sort.Slice(r.timeSamples, func(i, j int) bool {
+		return r.timeSamples[i].offset < r.timeSamples[j].offset
+	})
+
 	offsetRange := float64(maxOff - minOff)
 	for username, positions := range r.PlayerPositions {
 		for i := range positions {
 			frac := float64(positions[i].offset-minOff) / offsetRange
+			// Map position fraction to game clock by indexing into time samples
+			positions[i].GameClock = r.gameClockAtFraction(frac)
 			// Time as elapsed seconds (0 = round start, duration = round end)
 			elapsed := frac * duration
 			remaining := duration - elapsed
@@ -1228,6 +1239,22 @@ func (r *Reader) interpolatePositionTimes() {
 		}
 		r.PlayerPositions[username] = positions
 	}
+}
+
+// gameClockAtFraction returns the game clock for a normalized position fraction (0..1)
+// by indexing into the time samples proportionally.
+func (r *Reader) gameClockAtFraction(frac float64) float64 {
+	if len(r.timeSamples) == 0 {
+		return 0
+	}
+	idx := int(frac * float64(len(r.timeSamples)-1))
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(r.timeSamples) {
+		idx = len(r.timeSamples) - 1
+	}
+	return r.timeSamples[idx].gameClock
 }
 
 // DedupPositions removes consecutive duplicate positions for each player
