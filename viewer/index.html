@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>R6 Dissect - Replay Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+#toolbar { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; flex-wrap: wrap; }
+.btn { padding: 3px 10px; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px; user-select: none; }
+.btn:hover { background: #30363d; }
+.btn.active { background: #1f6feb; border-color: #1f6feb; }
+select { padding: 2px 6px; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; font-size: 12px; }
+#toolbar label { font-size: 12px; cursor: pointer; }
+#toolbar input[type="file"] { display: none; }
+#info-bar { padding: 2px 10px; background: #161b22; font-size: 11px; display: flex; gap: 16px; border-bottom: 1px solid #30363d; flex-shrink: 0; color: #8b949e; }
+#main-area { display: flex; flex: 1; overflow: hidden; }
+#player-panel { width: 170px; background: #161b22; border-right: 1px solid #30363d; padding: 8px; font-size: 11px; overflow-y: auto; flex-shrink: 0; }
+#player-panel h3 { font-size: 11px; margin-bottom: 4px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.player-row { display: flex; align-items: center; gap: 5px; padding: 2px 3px; border-radius: 3px; }
+.player-row img { width: 20px; height: 20px; border-radius: 2px; }
+.player-row .name { font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-label { font-size: 9px; color: #8b949e; padding: 3px 0 1px; text-transform: uppercase; }
+#map-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#floor-tabs { display: flex; gap: 2px; padding: 4px 8px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+.floor-tab { padding: 3px 12px; background: #21262d; border: 1px solid #30363d; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 11px; }
+.floor-tab:hover { background: #30363d; }
+.floor-tab.active { background: #0d1117; border-bottom-color: #0d1117; color: #58a6ff; }
+#floors-container { flex: 1; display: flex; gap: 4px; padding: 4px; overflow: hidden; position: relative; }
+.floor-view { flex: 1; position: relative; overflow: hidden; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; cursor: grab; min-width: 0; transition: flex 0.3s; }
+.floor-view.focused { flex: 3; }
+.floor-view.minimized { flex: 0; min-width: 60px; max-width: 60px; }
+.floor-label { position: absolute; top: 4px; left: 8px; font-size: 13px; font-weight: bold; color: #8b949e; z-index: 10; pointer-events: none; text-shadow: 0 1px 3px #000; }
+.floor-view canvas { position: absolute; top: 0; left: 0; }
+#event-panel { width: 200px; background: #161b22; border-left: 1px solid #30363d; padding: 8px; font-size: 11px; overflow-y: auto; flex-shrink: 0; }
+#event-panel h3 { font-size: 11px; margin-bottom: 4px; color: #8b949e; text-transform: uppercase; }
+.event-item { display: flex; align-items: center; gap: 4px; padding: 2px 3px; border-radius: 3px; opacity: 0.4; cursor: pointer; font-size: 10px; }
+.event-item:hover { background: #21262d; }
+.event-item.active { opacity: 1; background: #21262d; }
+.event-item img { width: 16px; height: 16px; }
+.event-item .time { color: #8b949e; min-width: 28px; }
+#loadout-bar { display: flex; align-items: center; gap: 2px; padding: 3px 8px; background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0; min-height: 56px; overflow-x: auto; }
+.loadout-card { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 6px; border-radius: 4px; min-width: 60px; }
+.loadout-card .op-icon { width: 30px; height: 30px; border-radius: 3px; }
+.loadout-card .op-name { font-size: 8px; color: #8b949e; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loadout-gadgets { display: flex; gap: 1px; }
+.loadout-gadgets img { width: 14px; height: 14px; opacity: 0.7; }
+#timeline-bar { display: flex; align-items: center; gap: 8px; padding: 3px 10px; background: #0d1117; border-top: 1px solid #30363d; flex-shrink: 0; height: 30px; }
+#play-btn { font-size: 14px; width: 28px; text-align: center; padding: 1px; }
+#timeline { flex: 1; height: 4px; -webkit-appearance: none; appearance: none; background: #30363d; border-radius: 2px; outline: none; cursor: pointer; }
+#timeline::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #58a6ff; cursor: pointer; }
+#time-display { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; color: #8b949e; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+    <label>Map:</label>
+    <select id="map-select"><option value="">Select map...</option></select>
+    <label class="btn" for="json-input">Load Replay</label>
+    <input type="file" id="json-input" accept=".json">
+    <button class="btn" id="speed-btn">1x</button>
+    <span id="status" style="font-size:10px;color:#8b949e;margin-left:auto"></span>
+</div>
+<div id="info-bar">
+    <span id="cursor-info">-</span>
+    <span id="game-info">-</span>
+    <span id="data-info"></span>
+</div>
+<div id="main-area">
+    <div id="player-panel"><div id="site-info" style="font-size:11px;color:#58a6ff;padding:4px 0 6px;border-bottom:1px solid #30363d;margin-bottom:6px;display:none"></div><h3>Players</h3><div id="player-list"></div></div>
+    <div id="map-area">
+        <div id="floor-tabs"></div>
+        <div id="floors-container"></div>
+    </div>
+    <div id="event-panel"><h3>Events</h3><div id="event-list"></div></div>
+</div>
+<div id="loadout-bar"></div>
+<div id="timeline-bar">
+    <button class="btn" id="play-btn">&#9654;</button>
+    <input type="range" id="timeline" min="0" max="1000" value="0">
+    <span id="time-display">0:00</span>
+    <button class="btn" id="speed-btn2">1x</button>
+</div>
+
+<script>
+const ASSET_PATH = 'assets';
+const MAPS_PATH = 'maps';
+
+const OPERATORS_DATA = {"Sledge":{"side":"attack","ability":"Breaching Hammer","abilityFile":"Breaching Hammer.png","equipment":["Frag Grenade","Impact EMP Grenade"]},"Thatcher":{"side":"attack","ability":"EMP Grenade","abilityFile":"E.G.S. Disruptor.png","equipment":["Breach Charge","Claymore"]},"Ash":{"side":"attack","ability":"Breaching Round","abilityFile":"Breaching round.png","equipment":["Breach Charge","Claymore"]},"Thermite":{"side":"attack","ability":"Exothermic Charge","abilityFile":"Exothermic Charge.png","equipment":["Smoke Grenade","Stun Grenade"]},"Twitch":{"side":"attack","ability":"Shock Drone","abilityFile":"Shock Drone.png","equipment":["Smoke Grenade","Claymore"]},"Montagne":{"side":"attack","ability":"Extendable Shield","abilityFile":"Le Roc Shield.png","equipment":["Hard Breach Charge","Smoke Grenade","Impact EMP Grenade"]},"Glaz":{"side":"attack","ability":"Flip Sight","abilityFile":"Flip Sight.png","equipment":["Smoke Grenade","Frag Grenade"]},"Fuze":{"side":"attack","ability":"Cluster Charge","abilityFile":"Cluster Charge.png","equipment":["Breach Charge","Hard Breach Charge","Smoke Grenade"]},"Blitz":{"side":"attack","ability":"Flash Shield","abilityFile":"G-52 Tactical Shield.png","equipment":["Smoke Grenade","Breach Charge"]},"IQ":{"side":"attack","ability":"Electronics Detector","abilityFile":"Electronics Detector.png","equipment":["Breach Charge","Claymore"]},"Buck":{"side":"attack","ability":"Skeleton Key","abilityFile":"Skeleton Key.png","equipment":["Stun Grenade","Hard Breach Charge"]},"Blackbeard":{"side":"attack","ability":"Rifle Shield","abilityFile":"H.U.L.L. Adaptable Shield.png","equipment":["Impact EMP Grenade","Claymore"]},"Capitao":{"side":"attack","ability":"Tactical Crossbow","abilityFile":"Tactical Crossbow.png","equipment":["Claymore","Hard Breach Charge"]},"Hibana":{"side":"attack","ability":"X-KAIROS","abilityFile":"X-Kairos.png","equipment":["Stun Grenade","Breach Charge"]},"Jackal":{"side":"attack","ability":"Eyenox Model III","abilityFile":"Eyenox Model III.png","equipment":["Claymore","Smoke Grenade"]},"Ying":{"side":"attack","ability":"Candela","abilityFile":"Candela.png","equipment":["Hard Breach Charge","Smoke Grenade"]},"Zofia":{"side":"attack","ability":"KS79 LIFELINE","abilityFile":"KS79 Lifeline.png","equipment":["Breach Charge","Claymore"]},"Dokkaebi":{"side":"attack","ability":"Logic Bomb","abilityFile":"Logic Bomb.png","equipment":["Smoke Grenade","Stun Grenade","Impact EMP Grenade"]},"Lion":{"side":"attack","ability":"EE-ONE-D","abilityFile":"Robots.png","equipment":["Stun Grenade","Claymore","Impact EMP Grenade"]},"Finka":{"side":"attack","ability":"Adrenal Surge","abilityFile":"Robots.png","equipment":["Stun Grenade","Smoke Grenade"]},"Maverick":{"side":"attack","ability":"Breaching Torch","abilityFile":"Robots.png","equipment":["Stun Grenade","Claymore"]},"Nomad":{"side":"attack","ability":"Airjab Launcher","abilityFile":"Robots.png","equipment":["Stun Grenade","Breach Charge"]},"Gridlock":{"side":"attack","ability":"Trax Stingers","abilityFile":"Robots.png","equipment":["Smoke Grenade","Breach Charge","Impact EMP Grenade"]},"Nokk":{"side":"attack","ability":"HEL Presence Reduction","abilityFile":"Robots.png","equipment":["Frag Grenade","Hard Breach Charge"]},"Amaru":{"side":"attack","ability":"Garra Hook","abilityFile":"Robots.png","equipment":["Stun Grenade","Hard Breach Charge"]},"Kali":{"side":"attack","ability":"LV Explosive Lance","abilityFile":"Robots.png","equipment":["Breach Charge","Claymore"]},"Iana":{"side":"attack","ability":"Gemini Replicator","abilityFile":"Robots.png","equipment":["Frag Grenade","Smoke Grenade"]},"Ace":{"side":"attack","ability":"S.E.L.M.A. Aqua Breacher","abilityFile":"Robots.png","equipment":["Breach Charge","Claymore"]},"Zero":{"side":"attack","ability":"Argus Launcher","abilityFile":"Robots.png","equipment":["Hard Breach Charge","Claymore"]},"Flores":{"side":"attack","ability":"RCE-Ratero Charge","abilityFile":"Robots.png","equipment":["Stun Grenade","Claymore"]},"Osa":{"side":"attack","ability":"Talon-8 Clear Shield","abilityFile":"Robots.png","equipment":["Smoke Grenade","Impact EMP Grenade"]},"Sens":{"side":"attack","ability":"R.O.U. Projector System","abilityFile":"Robots.png","equipment":["Hard Breach Charge","Claymore"]},"Grim":{"side":"attack","ability":"Kawan Hive Launcher","abilityFile":"Robots.png","equipment":["Breach Charge","Claymore","Impact EMP Grenade"]},"Brava":{"side":"attack","ability":"Kludge Drone","abilityFile":"Robots.png","equipment":["Smoke Grenade","Claymore"]},"Ram":{"side":"attack","ability":"BU-GI Auto Breacher","abilityFile":"Robots.png","equipment":["Stun Grenade","Smoke Grenade"]},"Deimos":{"side":"attack","ability":"DeathMark Tracker","abilityFile":"Robots.png","equipment":["Frag Grenade","Hard Breach Charge"]},"Striker":{"side":"attack","ability":"Vanguard","abilityFile":"Robots.png","equipment":["Breach Charge","Claymore","Frag Grenade","Smoke Grenade","Stun Grenade","Hard Breach Charge","Impact EMP Grenade"]},"SolidSnake":{"side":"attack","ability":"OSP","abilityFile":"Robots.png","equipment":["Frag Grenade","Stun Grenade","Impact EMP Grenade","Smoke Grenade","Breach Charge"]},"Smoke":{"side":"defense","ability":"Remote Gas Grenade","abilityFile":"Remote Gas Grenade.png","equipment":["Barbed Wire","Proximity Alarm"]},"Mute":{"side":"defense","ability":"Signal Disruptor","abilityFile":"Signal Disruptor.png","equipment":["Nitro Cell","Bulletproof Camera"]},"Castle":{"side":"defense","ability":"Armor Panel","abilityFile":"Armor Panel.png","equipment":["Bulletproof Camera","Proximity Alarm"]},"Pulse":{"side":"defense","ability":"Cardiac Sensor","abilityFile":"Cardiac Sensor.png","equipment":["Nitro Cell","Barbed Wire"]},"Doc":{"side":"defense","ability":"Stim Pistol","abilityFile":"Stim Pistol.png","equipment":["Bulletproof Camera","Barbed Wire"]},"Rook":{"side":"defense","ability":"Armor Pack","abilityFile":"Armor Pack.png","equipment":["Proximity Alarm","Observation Blocker"]},"Kapkan":{"side":"defense","ability":"Entry Denial Device","abilityFile":"Entry Denial Device.png","equipment":["Impact Grenade","Nitro Cell"]},"Tachanka":{"side":"defense","ability":"Shumikha Launcher","abilityFile":"Shumikha Launcher.png","equipment":["Barbed Wire","Deployable Shield","Proximity Alarm"]},"Jager":{"side":"defense","ability":"Active Defense System","abilityFile":"Active Defense.png","equipment":["Bulletproof Camera","Observation Blocker"]},"Bandit":{"side":"defense","ability":"Shock Wire","abilityFile":"Shock Wire.png","equipment":["Barbed Wire","Nitro Cell"]},"Frost":{"side":"defense","ability":"Welcome Mat","abilityFile":"Welcome Mat.png","equipment":["Bulletproof Camera","Deployable Shield"]},"Valkyrie":{"side":"defense","ability":"Black Eye","abilityFile":"Black Eye.png","equipment":["Impact Grenade","Nitro Cell"]},"Caveira":{"side":"defense","ability":"Silent Step","abilityFile":"Silent Step.png","equipment":["Impact Grenade","Proximity Alarm"]},"Echo":{"side":"defense","ability":"Yokai","abilityFile":"Yokai.png","equipment":["Impact Grenade","Deployable Shield"]},"Mira":{"side":"defense","ability":"Black Mirror","abilityFile":"Black Mirror.png","equipment":["Nitro Cell","Proximity Alarm"]},"Lesion":{"side":"defense","ability":"Gu","abilityFile":"Gu.png","equipment":["Impact Grenade","Bulletproof Camera"]},"Ela":{"side":"defense","ability":"Grzmot Mine","abilityFile":"Grzmot Mine.png","equipment":["Barbed Wire","Deployable Shield","Observation Blocker"]},"Vigil":{"side":"defense","ability":"ERC-7","abilityFile":"ERC-7.png","equipment":["Bulletproof Camera","Impact Grenade"]},"Maestro":{"side":"defense","ability":"Evil Eye","abilityFile":"Evil Eye.png","equipment":["Barbed Wire","Impact Grenade","Observation Blocker"]},"Alibi":{"side":"defense","ability":"Prisma","abilityFile":"Prisma.png","equipment":["Proximity Alarm","Observation Blocker"]},"Clash":{"side":"defense","ability":"CCE Shield","abilityFile":"CCE Shield MK2.png","equipment":["Barbed Wire","Impact Grenade","Deployable Shield"]},"Kaid":{"side":"defense","ability":"Rtila Electroclaw","abilityFile":"Rtila Electroclaw.png","equipment":["Nitro Cell","Barbed Wire","Observation Blocker"]},"Mozzie":{"side":"defense","ability":"Pest Launcher","abilityFile":"Pest Launcher.png","equipment":["Barbed Wire","Nitro Cell"]},"Warden":{"side":"defense","ability":"Glance Smart Glasses","abilityFile":"Glance Smart Glaces.png","equipment":["Deployable Shield","Nitro Cell","Observation Blocker"]},"Goyo":{"side":"defense","ability":"Volcan Canister","abilityFile":"Volcan Shield.png","equipment":["Proximity Alarm","Bulletproof Camera","Impact Grenade"]},"Wamai":{"side":"defense","ability":"Mag-NET System","abilityFile":"MAG-NET System.png","equipment":["Proximity Alarm","Impact Grenade"]},"Oryx":{"side":"defense","ability":"Remah Dash","abilityFile":"Remah Dash.png","equipment":["Barbed Wire","Proximity Alarm"]},"Melusi":{"side":"defense","ability":"Banshee Sonic Defense","abilityFile":"Banshee Sonic Defense.png","equipment":["Bulletproof Camera","Impact Grenade"]},"Aruni":{"side":"defense","ability":"Surya Gate","abilityFile":"Surya Gate.png","equipment":["Bulletproof Camera","Barbed Wire"]},"Thunderbird":{"side":"defense","ability":"Kona Station","abilityFile":"Kona Station.png","equipment":["Impact Grenade","Deployable Shield","Bulletproof Camera"]},"Thorn":{"side":"defense","ability":"Razorbloom Shell","abilityFile":"Razorbloom Shell.png","equipment":["Deployable Shield","Barbed Wire"]},"Azami":{"side":"defense","ability":"Kiba Barrier","abilityFile":"Kiba Barrier.png","equipment":["Impact Grenade","Barbed Wire"]},"Solis":{"side":"defense","ability":"SPEC-IO Electro-Sensor","abilityFile":"SPEC-IO Electro-Sensor.png","equipment":["Impact Grenade","Bulletproof Camera"]},"Fenrir":{"side":"defense","ability":"F-NATT Dread Mine","abilityFile":"F-NATT Dread Mine.png","equipment":["Bulletproof Camera","Observation Blocker"]},"Tubarao":{"side":"defense","ability":"Zoto Canister","abilityFile":"ZOTO Canister.png","equipment":["Nitro Cell","Proximity Alarm"]},"Sentry":{"side":"defense","ability":"Vanguard","abilityFile":"Robots.png","equipment":["Barbed Wire","Bulletproof Camera","Deployable Shield","Observation Blocker","Impact Grenade","Nitro Cell","Proximity Alarm"]},"Skopos":{"side":"defense","ability":"V10 Pantheon Shells","abilityFile":"Robots.png","equipment":["Impact Grenade","Proximity Alarm"]},"Denari":{"side":"defense","ability":"T.R.I.P. Connector","abilityFile":"T.R.I.P. Connector.png","equipment":["Observation Blocker","Deployable Shield"]}};
+const MAPS_DATA = {"clubhouse":{"name":"Club House","floors":["basement","1f","2f"]},"bank":{"name":"Bank","floors":["basement","1f","2f"]},"border":{"name":"Border","floors":["1f","2f"]},"chalet":{"name":"Chalet","floors":["1f","2f"]},"consulate":{"name":"Consulate","floors":["basement","1f","2f"]},"fortress":{"name":"Fortress","floors":["1f","2f"]},"kafe":{"name":"Kafe Dostoyevsky","floors":["1f","2f","3f"]},"lair":{"name":"Lair","floors":["basement","1f","2f"]},"nighthaven_labs":{"name":"Nighthaven Labs","floors":["basement","1f","2f"]}};
+
+// Floor Z ranges for each floor name
+const FLOOR_Z = { "basement": [-8, -2], "1f": [-2, 2], "2f": [2, 7], "3f": [7, 12] };
+const FLOOR_LABELS = { "basement": "B", "1f": "1F", "2f": "2F", "3f": "3F" };
+
+let operatorData = OPERATORS_DATA, mapsData = MAPS_DATA;
+let posData = null, currentMap = null;
+let floorGeos = {}; // floorName -> {canvas, w, h, transform}
+let floorCanvases = {}; // floorName -> {map: canvas, overlay: canvas, container: div}
+let playerColors = {}, playerVisible = {};
+let playerPaths = {}; // username -> [{x,y,z,floor}...]
+let activities = [];
+let playing = false, playSpeed = 1, playTime = 0, roundDuration = 131, lastAnimTime = 0;
+let totalFrames = 1000, playFrame = 0; // kept for timeline slider
+let focusedFloor = null; // null = all visible
+let hiddenFloors = new Set(); // floors explicitly hidden by user
+let playerDeathTimes = {}; // username -> elapsed time of death
+const COLORS_ATK = ['#ff6b6b','#339af0','#ffd43b','#cc5de8','#ff922b'];
+const COLORS_DEF = ['#51cf66','#20c997','#748ffc','#f06595','#a9e34b'];
+
+const opImages = {};
+function getOpImage(name) { if(!name)return null; const k=name.replace(/\s/g,''); if(opImages[k])return opImages[k]; const img=new Image(); img.src=`${ASSET_PATH}/operators/${name}.png`; opImages[k]=img; return img; }
+function findOpInfo(name) { if(!operatorData)return null; if(operatorData[name])return operatorData[name]; for(const[k,v]of Object.entries(operatorData)) if(k.toLowerCase()===name.toLowerCase())return v; return null; }
+function getPlayerOpName(p) { const rn=p.roleName||''; if(rn) return rn.charAt(0).toUpperCase()+rn.slice(1).toLowerCase(); return p.operator?p.operator.name:''; }
+function getFloorForZ(z) { for(const[f,[lo,hi]]of Object.entries(FLOOR_Z)) if(z>=lo&&z<hi) return f; return z < -2 ? "basement" : z < 2 ? "1f" : "2f"; }
+
+// === INIT ===
+function buildMapSelect() {
+    const sel = document.getElementById('map-select');
+    sel.innerHTML = '<option value="">Select map...</option>';
+    for(const[id,info]of Object.entries(mapsData)){
+        const opt = document.createElement('option'); opt.value=id; opt.textContent=info.name; sel.appendChild(opt);
+    }
+}
+buildMapSelect();
+
+document.getElementById('map-select').addEventListener('change', async e => {
+    currentMap = e.target.value;
+    if(!currentMap || !mapsData[currentMap]) return;
+    await loadMapFloors(currentMap);
+});
+
+async function loadMapFloors(mapId) {
+    const info = mapsData[mapId];
+    floorGeos = {};
+    for(const floor of info.floors) {
+        try {
+            const resp = await fetch(`${MAPS_PATH}/${mapId}/${floor}.json`);
+            if(!resp.ok) continue;
+            const data = await resp.json();
+            const zRange = FLOOR_Z[floor];
+            floorGeos[floor] = generateMap(data, zRange);
+        } catch(e) { console.warn(`No trace for ${mapId}/${floor}`); }
+    }
+    buildFloorViews(info.floors);
+    document.getElementById('status').textContent = `Loaded ${info.name}`;
+}
+
+// === GENERATE MAP ===
+function generateMap(srcData, zRange) {
+    const positions = srcData.playerPositions || {};
+    const allPts = [];
+    for(const arr of Object.values(positions))
+        for(const p of arr)
+            if((Math.abs(p.x)>1||Math.abs(p.y)>1)&&p.z>-50)
+                if(!zRange||(p.z>=zRange[0]&&p.z<zRange[1]))
+                    allPts.push(p);
+    if(allPts.length<10)return null;
+    const SCALE=14,PAD=40;
+    const xs=allPts.map(p=>p.x),ys=allPts.map(p=>p.y);
+    const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+    const w=Math.ceil((maxX-minX)*SCALE)+PAD*2,h=Math.ceil((maxY-minY)*SCALE)+PAD*2;
+    const grid=new Float32Array(w*h); const BRUSH=5;
+    for(const p of allPts){const cx=Math.round((p.x-minX)*SCALE)+PAD,cy=h-1-(Math.round((p.y-minY)*SCALE)+PAD);for(let dy=-BRUSH;dy<=BRUSH;dy++)for(let dx=-BRUSH;dx<=BRUSH;dx++){const nx=cx+dx,ny=cy+dy,dist=Math.sqrt(dx*dx+dy*dy);if(nx>=0&&nx<w&&ny>=0&&ny<h&&dist<=BRUSH)grid[ny*w+nx]+=1/(1+dist*0.5);}}
+    let maxD=0;for(let i=0;i<grid.length;i++)if(grid[i]>maxD)maxD=grid[i];
+    const threshold=maxD*0.015;const binary=new Uint8Array(w*h);for(let i=0;i<grid.length;i++)binary[i]=grid[i]>threshold?1:0;
+    function dilate(s,r){const d=new Uint8Array(w*h);for(let y=r;y<h-r;y++)for(let x=r;x<w-r;x++){let f=false;for(let dy=-r;dy<=r&&!f;dy++)for(let dx=-r;dx<=r;dx++)if(dx*dx+dy*dy<=r*r&&s[(y+dy)*w+(x+dx)]){f=true;break;}d[y*w+x]=f?1:0;}return d;}
+    function erode(s,r){const d=new Uint8Array(w*h);for(let y=r;y<h-r;y++)for(let x=r;x<w-r;x++){let a=true;for(let dy=-r;dy<=r&&a;dy++)for(let dx=-r;dx<=r;dx++)if(dx*dx+dy*dy<=r*r&&!s[(y+dy)*w+(x+dx)]){a=false;break;}d[y*w+x]=a?1:0;}return d;}
+    let closed=dilate(binary,4);closed=erode(closed,3);
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const tctx=canvas.getContext('2d');
+    tctx.fillStyle='#0d1117';tctx.fillRect(0,0,w,h);
+    const imgData=tctx.createImageData(w,h);
+    for(let i=0;i<w*h;i++){if(closed[i]){imgData.data[i*4]=28;imgData.data[i*4+1]=33;imgData.data[i*4+2]=45;imgData.data[i*4+3]=255;}else{imgData.data[i*4]=13;imgData.data[i*4+1]=17;imgData.data[i*4+2]=23;imgData.data[i*4+3]=255;}}
+    tctx.putImageData(imgData,0,0);
+    tctx.strokeStyle='#b0b8c4';tctx.lineWidth=2;tctx.lineCap='round';
+    for(let y=1;y<h-1;y++){let ss=-1;for(let x=0;x<w;x++){const e=closed[y*w+x]&&((y>0&&!closed[(y-1)*w+x])||(y<h-1&&!closed[(y+1)*w+x]));if(e&&ss<0)ss=x;else if(!e&&ss>=0){if(x-ss>3){tctx.beginPath();tctx.moveTo(ss,y);tctx.lineTo(x,y);tctx.stroke();}ss=-1;}}}
+    for(let x=1;x<w-1;x++){let ss=-1;for(let y=0;y<h;y++){const e=closed[y*w+x]&&((x>0&&!closed[y*w+x-1])||(x<w-1&&!closed[y*w+x+1]));if(e&&ss<0)ss=y;else if(!e&&ss>=0){if(y-ss>3){tctx.beginPath();tctx.moveTo(x,ss);tctx.lineTo(x,y);tctx.stroke();}ss=-1;}}}
+    return{canvas,w,h,transform:{ax:[SCALE,0,-minX*SCALE+PAD],ay:[0,-SCALE,maxY*SCALE+PAD]}};
+}
+
+function gameToPixelFloor(gx, gy, floorGeo) {
+    if(!floorGeo)return null;
+    const t=floorGeo.transform;
+    return[t.ax[0]*gx+t.ax[1]*gy+t.ax[2],t.ay[0]*gx+t.ay[1]*gy+t.ay[2]];
+}
+
+// === BUILD FLOOR VIEWS ===
+function buildFloorViews(floors) {
+    const container = document.getElementById('floors-container');
+    container.innerHTML = '';
+    const tabs = document.getElementById('floor-tabs');
+    tabs.innerHTML = '';
+    floorCanvases = {};
+    hiddenFloors = new Set();
+    focusedFloor = null;
+
+    for(const floor of floors) {
+        // Tab — click to toggle visibility, double-click to solo
+        const tab = document.createElement('div'); tab.className='floor-tab active';
+        tab.textContent = FLOOR_LABELS[floor]||floor.toUpperCase();
+        tab.dataset.floor = floor;
+        tab.addEventListener('click',(e)=>{
+            e.stopPropagation();
+            if(hiddenFloors.has(floor)){
+                hiddenFloors.delete(floor);
+                tab.classList.add('active');
+            } else {
+                // Don't hide if it's the last visible floor
+                const visibleCount = floors.filter(f=>!hiddenFloors.has(f)).length;
+                if(visibleCount > 1){
+                    hiddenFloors.add(floor);
+                    tab.classList.remove('active');
+                }
+            }
+            focusedFloor = null;
+            updateFloorFocus();
+        });
+        tab.addEventListener('dblclick',(e)=>{
+            e.stopPropagation();
+            // Solo this floor (hide all others) or unsolo (show all)
+            const allOthersHidden = floors.every(f=>f===floor||hiddenFloors.has(f));
+            if(allOthersHidden){
+                // Unsolo — show all
+                hiddenFloors.clear();
+                focusedFloor = null;
+            } else {
+                // Solo — hide all others, expand this one
+                hiddenFloors.clear();
+                floors.forEach(f=>{if(f!==floor)hiddenFloors.add(f);});
+                focusedFloor = floor;
+            }
+            updateFloorTabs();
+            updateFloorFocus();
+        });
+        tabs.appendChild(tab);
+
+        // Floor view
+        const view = document.createElement('div'); view.className='floor-view'; view.dataset.floor=floor;
+        const label = document.createElement('div'); label.className='floor-label';
+        label.textContent = FLOOR_LABELS[floor]||floor.toUpperCase();
+        const mapCvs = document.createElement('canvas');
+        const olCvs = document.createElement('canvas');
+        olCvs.style.position='absolute'; olCvs.style.top='0'; olCvs.style.left='0';
+        view.append(label, mapCvs, olCvs);
+        container.appendChild(view);
+
+        const geo = floorGeos[floor];
+        if(geo) {
+            mapCvs.width=geo.w; mapCvs.height=geo.h;
+            olCvs.width=geo.w; olCvs.height=geo.h;
+            mapCvs.getContext('2d').drawImage(geo.canvas,0,0);
+            const scaleToFit = () => {
+                const rect = view.getBoundingClientRect();
+                if(rect.width<1||rect.height<1)return;
+                const scale = Math.min(rect.width/geo.w, rect.height/geo.h);
+                const ox = (rect.width - geo.w*scale)/2, oy = (rect.height - geo.h*scale)/2;
+                mapCvs.style.transform = olCvs.style.transform = `translate(${ox}px,${oy}px) scale(${scale})`;
+                mapCvs.style.transformOrigin = olCvs.style.transformOrigin = '0 0';
+            };
+            floorCanvases[floor] = {map:mapCvs, overlay:olCvs, view, scaleToFit};
+            requestAnimationFrame(scaleToFit);
+            new ResizeObserver(scaleToFit).observe(view);
+        }
+    }
+}
+
+function updateFloorTabs(){
+    document.querySelectorAll('#floor-tabs .floor-tab').forEach(t=>{
+        const f=t.dataset.floor;
+        if(f) t.classList.toggle('active',!hiddenFloors.has(f));
+    });
+}
+
+function updateFloorFocus() {
+    document.querySelectorAll('.floor-view').forEach(v => {
+        const f = v.dataset.floor;
+        v.classList.remove('focused','minimized');
+        v.style.display = '';
+        if(hiddenFloors.has(f)){
+            v.style.display = 'none';
+        } else if(focusedFloor && f===focusedFloor){
+            v.classList.add('focused');
+        }
+    });
+    setTimeout(()=>{ for(const fc of Object.values(floorCanvases)) if(fc.scaleToFit) fc.scaleToFit(); }, 350);
+}
+
+// === PROCESS REPLAY ===
+function processData() {
+    if(!posData) return;
+    playerPaths = {};
+    roundDuration = posData.roundDuration || posData._maxTime || 131;
+    for(const[user,posArr]of Object.entries(posData.playerPositions||{})){
+        let pts = posArr.filter(p=>(Math.abs(p.x)>1||Math.abs(p.y)>1)&&p.z>-50);
+        const clean = pts.length ? [pts[0]] : [];
+        for(let i=1;i<pts.length;i++){
+            const dx=pts[i].x-clean[clean.length-1].x,dy=pts[i].y-clean[clean.length-1].y;
+            if(Math.sqrt(dx*dx+dy*dy)<8) clean.push(pts[i]);
+        }
+        const tagged = clean.map(p=>({...p, t: p.t || p.timeInSeconds || 0, floor: getFloorForZ(p.z)}));
+        playerPaths[user] = tagged;
+    }
+    activities = posData.activities || [];
+
+    // Extract death times from matchFeedback
+    playerDeathTimes = {};
+    for(const evt of (posData.matchFeedback||[])){
+        if(evt.type && evt.type.name === 'Kill' && evt.target){
+            // timeInSeconds is remaining time (countdown), convert to elapsed
+            const elapsed = roundDuration - (evt.timeInSeconds||0);
+            playerDeathTimes[evt.target] = elapsed;
+        }
+    }
+
+    // Timeline uses seconds * 10 for smooth scrubbing
+    totalFrames = Math.round(roundDuration * 10);
+    document.getElementById('timeline').max = totalFrames;
+    playTime = 0; playFrame = 0;
+
+    // Show site info
+    const siteDiv = document.getElementById('site-info');
+    if (posData.site) {
+        siteDiv.textContent = '📍 ' + posData.site;
+        siteDiv.style.display = 'block';
+    }
+}
+
+// === DRAW FRAME ===
+function drawFrame() {
+    try { _drawFrame(); } catch(e) { console.error('Draw error:', e); }
+}
+function _drawFrame() {
+    // Clear all overlays
+    for(const[floor, fc]of Object.entries(floorCanvases)){
+        const ctx = fc.overlay.getContext('2d');
+        ctx.clearRect(0, 0, fc.overlay.width, fc.overlay.height);
+    }
+    if(!posData) return;
+    updatePlayerDeathStatus();
+
+    const curTime = playTime; // elapsed seconds
+
+    for(const[user,path]of Object.entries(playerPaths)){
+        if(!playerVisible[user]) continue;
+        const color = playerColors[user] || '#fff';
+        if(path.length < 2) continue;
+
+        // Check if player is dead at current time
+        const deathTime = playerDeathTimes[user];
+        const isDead = deathTime !== undefined && curTime >= deathTime;
+
+        // Find position at current time using the t field
+        let idx = -1;
+        for(let i=0;i<path.length;i++){
+            const pt = path[i].t || 0;
+            if(pt < 0) continue;
+            if(pt <= curTime) idx = i;
+            else break;
+        }
+        if(idx < 0) continue;
+        const curFloor = path[idx].floor;
+        const player = (posData.players||[]).find(p=>p.username===user);
+        const opName = player ? getPlayerOpName(player) : null;
+
+        // Draw on each floor's overlay
+        for(const[floor, fc]of Object.entries(floorCanvases)){
+            const geo = floorGeos[floor]; if(!geo) continue;
+            const ctx = fc.overlay.getContext('2d');
+
+            // Trail for this floor (dimmer if dead)
+            ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.globalAlpha=isDead?0.08:0.2;
+            let started=false;
+            for(let i=0;i<=idx;i++){
+                if((path[i].t||0)<0 || path[i].floor!==floor) { started=false; continue; }
+                const pt=gameToPixelFloor(path[i].x,path[i].y,geo);
+                if(!pt)continue;
+                if(!started){ctx.moveTo(pt[0],pt[1]);started=true;} else ctx.lineTo(pt[0],pt[1]);
+            }
+            ctx.stroke(); ctx.globalAlpha=1;
+
+            // Recent trail + icon on current floor
+            if(curFloor===floor){
+                if(!isDead){
+                    const rs=Math.max(0,idx-40);
+                    ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.globalAlpha=0.6; started=false;
+                    for(let i=rs;i<=idx;i++){
+                        if((path[i].t||0)<0 || path[i].floor!==floor){started=false;continue;}
+                        const pt=gameToPixelFloor(path[i].x,path[i].y,geo);
+                        if(!pt)continue;
+                        if(!started){ctx.moveTo(pt[0],pt[1]);started=true;} else ctx.lineTo(pt[0],pt[1]);
+                    }
+                    ctx.stroke(); ctx.globalAlpha=1;
+                }
+
+                // Player icon (grayed out if dead)
+                const cur = gameToPixelFloor(path[idx].x,path[idx].y,geo);
+                if(cur){
+                    const opImg = opName ? getOpImage(opName) : null;
+                    if(isDead){
+                        // Dead: gray X marker
+                        ctx.globalAlpha=0.3;
+                        ctx.font='bold 16px sans-serif';ctx.fillStyle='#ff4444';ctx.strokeStyle='#000';ctx.lineWidth=2;
+                        ctx.strokeText('\u2620',cur[0]-6,cur[1]+6);ctx.fillText('\u2620',cur[0]-6,cur[1]+6);
+                        ctx.font='bold 8px sans-serif';ctx.fillStyle='#888';
+                        ctx.strokeText(user,cur[0]+12,cur[1]-2);ctx.fillText(user,cur[0]+12,cur[1]-2);
+                        ctx.globalAlpha=1;
+                    } else if(opImg&&opImg.complete&&opImg.naturalWidth>0){
+                        const sz=24;
+                        ctx.beginPath();ctx.arc(cur[0],cur[1],sz/2+2,0,Math.PI*2);ctx.fillStyle=color;ctx.globalAlpha=0.3;ctx.fill();ctx.globalAlpha=1;
+                        ctx.drawImage(opImg,cur[0]-sz/2,cur[1]-sz/2,sz,sz);
+                        ctx.beginPath();ctx.arc(cur[0],cur[1],sz/2,0,Math.PI*2);ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
+                        ctx.font='bold 9px sans-serif';ctx.fillStyle=color;ctx.strokeStyle='#000';ctx.lineWidth=2;
+                        ctx.strokeText(user,cur[0]+14,cur[1]-4);ctx.fillText(user,cur[0]+14,cur[1]-4);
+                    } else {
+                        ctx.beginPath();ctx.arc(cur[0],cur[1],6,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.strokeStyle='#000';ctx.lineWidth=1.5;ctx.stroke();
+                        ctx.font='bold 9px sans-serif';ctx.fillStyle=color;ctx.strokeStyle='#000';ctx.lineWidth=2;
+                        ctx.strokeText(user,cur[0]+14,cur[1]-4);ctx.fillText(user,cur[0]+14,cur[1]-4);
+                    }
+                }
+            }
+        }
+    }
+
+    // Activities
+    for(const act of activities){
+        const maxTime = roundDuration;
+        const af=1-(act.timeInSeconds/maxTime);
+        const actElapsed = roundDuration - act.timeInSeconds;
+        if(actElapsed > curTime) continue;
+        if(Math.abs(act.x)<1&&Math.abs(act.y)<1)continue;
+        const actFloor = getFloorForZ(act.z);
+        const fc = floorCanvases[actFloor]; if(!fc) continue;
+        const geo = floorGeos[actFloor]; if(!geo) continue;
+        const pt=gameToPixelFloor(act.x,act.y,geo); if(!pt)continue;
+        const ctx = fc.overlay.getContext('2d');
+        let fill;switch(act.type){case'reinforce':fill='#00bfff';break;case'gadget':fill='#ffff00';break;case'kill':fill='#ff0000';break;default:fill='#888';}
+        const age = (curTime - actElapsed) / roundDuration; const sc=Math.min(1,age*50);const sz=5*(0.5+0.5*sc);
+        ctx.save();ctx.translate(pt[0],pt[1]);ctx.rotate(Math.PI/4);ctx.fillStyle=fill;ctx.globalAlpha=0.5+0.5*sc;ctx.fillRect(-sz,-sz,sz*2,sz*2);ctx.strokeStyle='#000';ctx.lineWidth=1;ctx.strokeRect(-sz,-sz,sz*2,sz*2);ctx.restore();ctx.globalAlpha=1;
+        ctx.font='8px sans-serif';ctx.fillStyle='#fff';ctx.strokeStyle='#000';ctx.lineWidth=2;
+        ctx.strokeText(`${act.type} (${act.time})`,pt[0]+sz+2,pt[1]-3);ctx.fillText(`${act.type} (${act.time})`,pt[0]+sz+2,pt[1]-3);
+    }
+    updateEventHighlights(curTime);
+}
+
+function updateEventHighlights(t){document.querySelectorAll('.event-item').forEach(el=>{const et=parseFloat(el.dataset.elapsed||0);el.classList.toggle('active',et<=t&&et>t-3);});}
+
+// === PLAYBACK ===
+function animate(ts){
+    try {
+        if(!playing)return;
+        if(!lastAnimTime){ lastAnimTime=ts; requestAnimationFrame(animate); return; }
+        const dt=(ts-lastAnimTime)/1000;
+        lastAnimTime=ts;
+        if(dt > 0.5) { requestAnimationFrame(animate); return; }
+        playTime += dt * playSpeed;
+        if(playTime >= roundDuration){ playTime=roundDuration; playing=false; document.getElementById('play-btn').textContent='\u25B6'; }
+        playFrame = Math.round(playTime * 10);
+        document.getElementById('timeline').value = playFrame;
+        updateTimeDisplay(); drawFrame();
+        if(playing) requestAnimationFrame(animate);
+    } catch(e) {
+        console.error('Animation error:', e);
+        playing = false;
+    }
+}
+function updateTimeDisplay(){
+    const remaining = roundDuration - playTime;
+    const m=Math.floor(remaining/60), s=Math.floor(remaining%60);
+    document.getElementById('time-display').textContent=`${m}:${s.toString().padStart(2,'0')}`;
+}
+document.getElementById('play-btn').addEventListener('click',()=>{playing=!playing;document.getElementById('play-btn').textContent=playing?'\u275A\u275A':'\u25B6';if(playing){lastAnimTime=0;requestAnimationFrame(animate);}});
+document.getElementById('timeline').addEventListener('input',e=>{playFrame=parseInt(e.target.value);playTime=playFrame/10;updateTimeDisplay();drawFrame();});
+const speeds=[0.25,0.5,1,2,4,8];let speedIdx=2;
+function cycleSpeed(){speedIdx=(speedIdx+1)%speeds.length;playSpeed=speeds[speedIdx];document.getElementById('speed-btn').textContent=playSpeed+'x';document.getElementById('speed-btn2').textContent=playSpeed+'x';}
+document.getElementById('speed-btn').addEventListener('click',cycleSpeed);
+document.getElementById('speed-btn2').addEventListener('click',cycleSpeed);
+
+// === LOAD REPLAY ===
+document.getElementById('json-input').addEventListener('change',e=>{
+    const f=e.target.files[0];if(!f)return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+        posData=JSON.parse(reader.result);
+        let maxT=45;for(const a of(posData.activities||[]))if(a.timeInSeconds>maxT)maxT=a.timeInSeconds;
+        posData._maxTime=maxT;
+        const positions=posData.playerPositions||{};
+        const users=Object.keys(positions);
+        const players=posData.players||[];
+        let ai=0,di=0;
+        users.forEach(u=>{const p=players.find(pl=>pl.username===u);const team=p?posData.teams[p.teamIndex]:null;if(team&&team.role==='Attack'){playerColors[u]=COLORS_ATK[ai%COLORS_ATK.length];ai++;}else{playerColors[u]=COLORS_DEF[di%COLORS_DEF.length];di++;}playerVisible[u]=true;});
+        processData(); buildPlayerList(); buildLoadoutBar(); buildEventList();
+
+        // If no map loaded, auto-generate from replay data
+        if(Object.keys(floorGeos).length===0){
+            for(const[fName,zRange]of Object.entries(FLOOR_Z)){
+                const geo=generateMap(posData,zRange);
+                if(geo) floorGeos[fName]=geo;
+            }
+            const floors=Object.keys(floorGeos).sort();
+            if(floors.length)buildFloorViews(floors);
+        }
+
+        document.getElementById('data-info').textContent=`${users.length} players, ${Object.values(positions).reduce((s,a)=>s+a.length,0)} pts`;
+        drawFrame();
+    };
+    reader.readAsText(f);
+});
+
+function buildPlayerList(){
+    const list=document.getElementById('player-list');list.innerHTML='';
+    const players=posData.players||[];const teams=posData.teams||[{},{}];
+    for(let ti=0;ti<2;ti++){
+        const tp=players.filter(p=>p.teamIndex===ti);if(!tp.length)continue;
+        const label=document.createElement('div');label.className='team-label';label.textContent=(teams[ti]&&teams[ti].role)||`Team ${ti}`;label.style.color=ti===0?'#ff6b6b':'#51cf66';list.appendChild(label);
+        for(const p of tp){
+            const row=document.createElement('div');row.className='player-row';row.dataset.username=p.username;
+            const img=document.createElement('img');img.src=`${ASSET_PATH}/operators/${getPlayerOpName(p)}.png`;img.onerror=()=>{img.style.display='none';};
+            const name=document.createElement('span');name.className='name';name.textContent=p.username;name.style.color=playerColors[p.username]||'#eee';
+            const deathIcon=document.createElement('span');deathIcon.className='death-icon';deathIcon.textContent='\u2620';deathIcon.style.display='none';deathIcon.style.color='#ff4444';deathIcon.style.fontSize='12px';deathIcon.style.marginLeft='2px';
+            const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.style.marginLeft='auto';
+            cb.addEventListener('change',()=>{playerVisible[p.username]=cb.checked;drawFrame();});
+            row.append(img,name,deathIcon,cb);list.appendChild(row);
+        }
+    }
+}
+function updatePlayerDeathStatus(){
+    document.querySelectorAll('#player-list .player-row').forEach(row=>{
+        const user=row.dataset.username;if(!user)return;
+        const deathTime=playerDeathTimes[user];
+        const isDead=deathTime!==undefined&&playTime>=deathTime;
+        const icon=row.querySelector('.death-icon');
+        if(icon)icon.style.display=isDead?'inline':'none';
+        row.style.opacity=isDead?0.4:1;
+    });
+}
+function buildLoadoutBar(){
+    const bar=document.getElementById('loadout-bar');bar.innerHTML='';
+    for(const p of(posData.players||[])){
+        const opInfo=findOpInfo(getPlayerOpName(p));
+        const card=document.createElement('div');card.className='loadout-card';card.style.borderLeft=`2px solid ${playerColors[p.username]||'#555'}`;
+        const icon=document.createElement('img');icon.className='op-icon';icon.src=`${ASSET_PATH}/operators/${getPlayerOpName(p)}.png`;icon.onerror=()=>{icon.style.background='#333';};
+        const nameDiv=document.createElement('div');nameDiv.className='op-name';nameDiv.textContent=p.username;
+        const gadgets=document.createElement('div');gadgets.className='loadout-gadgets';
+        if(opInfo){const ai=document.createElement('img');ai.src=`${ASSET_PATH}/abilities/${opInfo.abilityFile}`;ai.title=opInfo.ability;gadgets.appendChild(ai);for(const eq of(opInfo.equipment||[])){const ei=document.createElement('img');ei.src=`${ASSET_PATH}/equipments/${eq}.png`;ei.title=eq;gadgets.appendChild(ei);}}
+        card.append(icon,nameDiv,gadgets);bar.appendChild(card);
+    }
+}
+function buildEventList(){
+    const list=document.getElementById('event-list');list.innerHTML='';const mt=posData._maxTime||45;
+    for(const act of activities){
+        if(Math.abs(act.x)<1&&Math.abs(act.y)<1)continue;
+        const elapsed = act.elapsed || (mt - act.timeInSeconds);
+        const div=document.createElement('div');div.className='event-item';div.dataset.elapsed=elapsed;
+        const fl=getFloorForZ(act.z);
+        const time=document.createElement('span');time.className='time';time.textContent=act.time;
+        const text=document.createElement('span');text.textContent=`${FLOOR_LABELS[fl]||fl} ${act.type} +${act.scoreDelta}`;
+        div.append(time,text);
+        div.addEventListener('click',()=>{playTime=elapsed;playFrame=Math.round(playTime*10);document.getElementById('timeline').value=playFrame;updateTimeDisplay();drawFrame();});
+        list.appendChild(div);
+    }
+}
+
+// Keyboard
+window.addEventListener('keydown',e=>{
+    if(e.code==='Space'){e.preventDefault();document.getElementById('play-btn').click();}
+    if(e.code==='ArrowRight'){playTime=Math.min(roundDuration,playTime+1);playFrame=Math.round(playTime*10);document.getElementById('timeline').value=playFrame;updateTimeDisplay();drawFrame();}
+    if(e.code==='ArrowLeft'){playTime=Math.max(0,playTime-1);playFrame=Math.round(playTime*10);document.getElementById('timeline').value=playFrame;updateTimeDisplay();drawFrame();}
+});
+</script>
+</body>
+</html>

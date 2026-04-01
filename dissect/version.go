@@ -11,4 +11,6 @@ const (
 	Y9S1        int = 8111697
 	Y9S1Update3 int = 8211379
 	Y9S2        int = 8303162
+	Y11S1       int = 9540659
+	Y11S1Patch2 int = 9578674
 )

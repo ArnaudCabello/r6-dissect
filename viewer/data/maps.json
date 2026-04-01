@@ -1,0 +1,38 @@
+{
+  "clubhouse": {
+    "name": "Club House",
+    "floors": ["basement", "1f", "2f"]
+  },
+  "bank": {
+    "name": "Bank",
+    "floors": ["basement", "1f", "2f"]
+  },
+  "border": {
+    "name": "Border",
+    "floors": ["1f", "2f"]
+  },
+  "chalet": {
+    "name": "Chalet",
+    "floors": ["1f", "2f"]
+  },
+  "consulate": {
+    "name": "Consulate",
+    "floors": ["basement", "1f", "2f"]
+  },
+  "fortress": {
+    "name": "Fortress",
+    "floors": ["1f", "2f"]
+  },
+  "kafe": {
+    "name": "Kafe Dostoyevsky",
+    "floors": ["1f", "2f", "3f"]
+  },
+  "lair": {
+    "name": "Lair",
+    "floors": ["basement", "1f", "2f"]
+  },
+  "nighthaven_labs": {
+    "name": "Nighthaven Labs",
+    "floors": ["basement", "1f", "2f"]
+  }
+}

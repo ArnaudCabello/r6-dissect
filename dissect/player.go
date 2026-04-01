@@ -21,10 +21,16 @@ func readPlayer(r *Reader) error {
 			r.deriveTeamRoles()
 		}
 	}()
+	nameOffset := r.offset // save offset before reading name
 	username, err := r.String()
 	if err != nil {
 		return err
 	}
+	// Save name offset for entity hash matching
+	if r.playerNameOffsets == nil {
+		r.playerNameOffsets = make(map[string]int)
+	}
+	r.playerNameOffsets[username] = nameOffset
 	if r.Header.CodeVersion >= Y7S4 {
 		if err := r.Seek([]byte{0x40, 0xF2, 0x15, 0x04}); err != nil {
 			return err

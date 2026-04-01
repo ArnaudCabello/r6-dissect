@@ -26,11 +26,23 @@ type Reader struct {
 	timeRaw                  string  // raw dissect format
 	lastDefuserPlayerIndex   int
 	planted                  bool
+	defuserDisabled          bool
+	defuserTimerSeen         bool
+	defuserPlantUsername     string
+	defuserDisableUsername   string
 	readPartial              bool // reads up to the player info packets
 	playersRead              int
 	lastKillerFromScoreboard string
-	Header                   Header        `json:"header"`
-	MatchFeedback            []MatchUpdate `json:"matchFeedback"`
+	Header                   Header                      `json:"header"`
+	MatchFeedback            []MatchUpdate               `json:"matchFeedback"`
+	PlayerPositions          map[string][]PlayerPosition `json:"-"`
+	Activities               []Activity                  `json:"-"`
+	lastScores               map[string]int
+	maxTimeValue             float64
+	entityPositions          map[entityKey][]PlayerPosition
+	skoposClonePositions     []PlayerPosition
+	skoposUsername           string
+	playerNameOffsets        map[string]int // username → byte offset of name in file
 	Scoreboard               Scoreboard
 }
 
@@ -45,6 +57,7 @@ func NewReader(in io.Reader) (r *Reader, err error) {
 	log.Debug().Bool("chunkedCompression (>=Y8S4)", chunkedCompression).Send()
 	r = &Reader{
 		readPartial: false,
+		lastScores:  make(map[string]int),
 	}
 	if chunkedCompression {
 		if err = r.readChunkedData(br); err != nil {
@@ -70,6 +83,7 @@ func NewReader(in io.Reader) (r *Reader, err error) {
 	r.Listen([]byte{0xEC, 0xDA, 0x4F, 0x80}, readScoreboardScore)
 	r.Listen([]byte{0x4D, 0x73, 0x7F, 0x9E}, readScoreboardAssists)
 	r.Listen([]byte{0x1C, 0xD2, 0xB1, 0x9D}, readScoreboardKills)
+	r.Listen(positionMarker, readPosition)
 	return r, err
 }
 
@@ -226,6 +240,7 @@ func (r *Reader) Read() (err error) {
 		}
 	}
 	if !r.readPartial {
+		r.resolvePositionEntities()
 		r.roundEnd()
 	}
 	r.b = nil

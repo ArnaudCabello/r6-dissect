@@ -47,6 +47,15 @@ func main() {
 		}
 		return
 	}
+	if viper.GetBool("positions") {
+		if stat.IsDir() {
+			log.Fatal().Msg("positions requires a replay file input.")
+		}
+		if err := writePositions(in, out); err != nil {
+			log.Fatal().Err(err).Send()
+		}
+		return
+	}
 	if viper.GetBool("dump") && stat.IsDir() {
 		log.Fatal().Msg("dump requires a replay file input.")
 	}
@@ -77,6 +86,7 @@ func setup() {
 	pflag.BoolP("debug", "d", false, "sets log level to debug")
 	pflag.BoolP("dump", "p", false, "dumps decompressed replay to the output")
 	pflag.Bool("info", false, "prints the replay header")
+	pflag.Bool("positions", false, "outputs player position data as JSON")
 	pflag.BoolP("version", "v", false, "prints the version")
 	pflag.Parse()
 	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
@@ -175,6 +185,30 @@ func writeRound(in io.Reader, out io.Writer) error {
 		r.Header,
 		r.MatchFeedback,
 		r.PlayerStats(),
+	})
+}
+
+func writePositions(in io.Reader, out io.Writer) error {
+	r, err := dissect.NewReader(in)
+	if err != nil {
+		return err
+	}
+	if err := r.Read(); !dissect.Ok(err) {
+		return err
+	}
+	type posOutput struct {
+		dissect.Header
+		MatchFeedback   []dissect.MatchUpdate               `json:"matchFeedback"`
+		PlayerPositions map[string][]dissect.PlayerPosition `json:"playerPositions"`
+		Activities      []dissect.Activity                  `json:"activities"`
+	}
+	positions := dissect.DedupPositions(r.PlayerPositions)
+	encoder := json.NewEncoder(out)
+	return encoder.Encode(posOutput{
+		Header:          r.Header,
+		MatchFeedback:   r.MatchFeedback,
+		PlayerPositions: positions,
+		Activities:      r.Activities,
 	})
 }
 

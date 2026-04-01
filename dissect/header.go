@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -111,6 +112,7 @@ const (
 	Consulate         Map = 379218689149
 	Lair              Map = 388073319671
 	Stadium2020       Map = 405306299908
+	ConsulateY11      Map = 418126004176
 
 	KilledOpponents  WinCondition = "KilledOpponents"
 	SecuredArea      WinCondition = "SecuredArea" // TODO
@@ -197,6 +199,8 @@ const (
 	Striker     Operator = 409899350463
 	Sentry      Operator = 409899350403
 	Skopos      Operator = 386098331713
+	Denari      Operator = 374667787937
+	SolidSnake  Operator = 444310693746
 )
 
 // duplicated code here could be avoided by defining a generic function accepting any Number type.
@@ -329,6 +333,12 @@ func (r *Reader) readHeader() (Header, error) {
 	props := make(map[string]string)
 	gmSettings := make([]int, 0)
 	players := make([]Player, 0)
+	// Known player-specific header keys
+	playerKeys := map[string]bool{
+		"playerid": true, "profileid": true, "playername": true, "team": true,
+		"heroname": true, "alliance": true, "roleimage": true, "rolename": true,
+		"roleportrait": true,
+	}
 	// Loops until the last property is mapped.
 	currentPlayer := Player{}
 	playerData := false
@@ -347,8 +357,8 @@ func (r *Reader) readHeader() (Header, error) {
 			}
 			playerData = true
 			currentPlayer = Player{}
-		}
-		if (k == "playlistcategory" || k == "id") && playerData {
+		} else if playerData && !playerKeys[k] {
+			// Exiting player data when a non-player key is encountered
 			players = append(players, currentPlayer)
 			playerData = false
 		}
@@ -370,6 +380,8 @@ func (r *Reader) readHeader() (Header, error) {
 					return Header{}, err
 				}
 				currentPlayer.ID = n
+			case "profileid":
+				currentPlayer.ProfileID = v
 			case "playername":
 				currentPlayer.Username = v
 			case "team":
@@ -397,7 +409,7 @@ func (r *Reader) readHeader() (Header, error) {
 				}
 				currentPlayer.RoleImage = n
 			case "rolename":
-				currentPlayer.RoleName = v
+				currentPlayer.RoleName = normalizeAccents(v)
 			case "roleportrait":
 				n, err := strconv.Atoi(v)
 				if err != nil {
@@ -531,6 +543,10 @@ func (r *Reader) deriveTeamRoles() {
 			continue
 		}
 		role := p.Operator.Role()
+		if role == "" {
+			log.Debug().Interface("operator", p.Operator).Msg("unknown operator role, skipping")
+			continue
+		}
 		teamIndex := p.TeamIndex
 		oppositeTeamIndex := teamIndex ^ 1
 		if role == Attack {
@@ -542,6 +558,18 @@ func (r *Reader) deriveTeamRoles() {
 		}
 		break
 	}
+}
+
+func normalizeAccents(s string) string {
+	replacer := strings.NewReplacer(
+		"Á", "A", "á", "a", "À", "A", "à", "a", "Â", "A", "â", "a", "Ã", "A", "ã", "a",
+		"É", "E", "é", "e", "È", "E", "è", "e", "Ê", "E", "ê", "e",
+		"Í", "I", "í", "i", "Ì", "I", "ì", "i", "Î", "I", "î", "i",
+		"Ó", "O", "ó", "o", "Ò", "O", "ò", "o", "Ô", "O", "ô", "o", "Õ", "O", "õ", "o",
+		"Ú", "U", "ú", "u", "Ù", "U", "ù", "u", "Û", "U", "û", "u",
+		"Ç", "C", "ç", "c", "Ñ", "N", "ñ", "n",
+	)
+	return replacer.Replace(s)
 }
 
 func (r *Reader) readHeaderString() (string, error) {

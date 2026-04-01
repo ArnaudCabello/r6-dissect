@@ -15,6 +15,9 @@ func readTime(r *Reader) error {
 	}
 	r.time = float64(time)
 	r.timeRaw = fmt.Sprintf("%d:%02d", time/60, time%60)
+	if float64(time) > r.maxTimeValue {
+		r.maxTimeValue = float64(time)
+	}
 	return nil
 }
 

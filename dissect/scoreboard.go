@@ -68,6 +68,8 @@ func readScoreboardAssists(r *Reader) error {
 }
 
 func readScoreboardScore(r *Reader) error {
+	// Save offset so activity tracker can re-read
+	savedOffset := r.offset
 	score, err := r.Uint32()
 	if err != nil {
 		return err
@@ -75,6 +77,14 @@ func readScoreboardScore(r *Reader) error {
 	if score == 0 {
 		return nil
 	}
+
+	// Track score-based activities for Y11S1+
+	if r.Header.CodeVersion >= Y11S1 {
+		r.trackScoreActivity(score)
+	}
+
+	// Restore offset and continue with original scoreboard parsing
+	r.offset = savedOffset + 5 // past the Uint32
 	if err = r.Skip(13); err != nil {
 		return err
 	}
