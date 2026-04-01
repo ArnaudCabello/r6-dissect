@@ -201,6 +201,7 @@ func writePositions(in io.Reader, out io.Writer) error {
 		MatchFeedback   []dissect.MatchUpdate               `json:"matchFeedback"`
 		PlayerPositions map[string][]dissect.PlayerPosition `json:"playerPositions"`
 		Activities      []dissect.Activity                  `json:"activities"`
+		Reinforcements  []dissect.Reinforcement             `json:"reinforcements"`
 	}
 	positions := dissect.DedupPositions(r.PlayerPositions)
 	encoder := json.NewEncoder(out)
@@ -209,6 +210,7 @@ func writePositions(in io.Reader, out io.Writer) error {
 		MatchFeedback:   r.MatchFeedback,
 		PlayerPositions: positions,
 		Activities:      r.Activities,
+		Reinforcements:  r.Reinforcements,
 	})
 }
 

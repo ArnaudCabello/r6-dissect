@@ -44,6 +44,10 @@ type Reader struct {
 	skoposUsername           string
 	playerNameOffsets        map[string]int // username → byte offset of name in file
 	timeSamples              []timeSample   // (offset, gameClock) from time packets
+	entityToUsername         map[entityKey]string // position entity ID → username
+	lastReinfCount           int                  // last seen reinforcement counter value (-1 = uninitialized)
+	pendingReinforcements    []Reinforcement      // reinforcements awaiting player attribution
+	Reinforcements           []Reinforcement      `json:"-"`
 	Scoreboard               Scoreboard
 }
 
@@ -62,8 +66,9 @@ func NewReader(in io.Reader) (r *Reader, err error) {
 	}
 	log.Debug().Bool("chunkedCompression (>=Y8S4)", chunkedCompression).Send()
 	r = &Reader{
-		readPartial: false,
-		lastScores:  make(map[string]int),
+		readPartial:    false,
+		lastScores:     make(map[string]int),
+		lastReinfCount: -1,
 	}
 	if chunkedCompression {
 		if err = r.readChunkedData(br); err != nil {
@@ -90,6 +95,7 @@ func NewReader(in io.Reader) (r *Reader, err error) {
 	r.Listen([]byte{0x4D, 0x73, 0x7F, 0x9E}, readScoreboardAssists)
 	r.Listen([]byte{0x1C, 0xD2, 0xB1, 0x9D}, readScoreboardKills)
 	r.Listen(positionMarker, readPosition)
+	r.Listen([]byte{0x67, 0xDE, 0x20, 0xF8}, readReinforcementCounter)
 	return r, err
 }
 
@@ -236,6 +242,10 @@ func (r *Reader) Read() (err error) {
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].offset < matches[j].offset
 	})
+	// Build entity-to-player map early so score events can identify players
+	if !r.readPartial {
+		r.entityToUsername = r.buildEntityPlayerMap()
+	}
 	log.Debug().Int("matches", len(matches)).Msg("calling listeners")
 	for _, entry := range matches {
 		for _, listener := range r.listeners[entry.listenerIndex] {
@@ -247,6 +257,7 @@ func (r *Reader) Read() (err error) {
 	}
 	if !r.readPartial {
 		r.resolvePositionEntities()
+		r.resolveReinforcementPlayers()
 		r.roundEnd()
 	}
 	r.b = nil

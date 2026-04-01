@@ -42,23 +42,7 @@ func scoreToActivity(delta int) ActivityType {
 }
 
 // trackScoreActivity is called from readScoreboardScore for Y11S1+.
-func (r *Reader) trackScoreActivity(score uint32) {
-	// Find the recording player
-	playerIdx := -1
-	for i, p := range r.Header.Players {
-		if p.ProfileID == r.Header.RecordingProfileID {
-			playerIdx = i
-			break
-		}
-	}
-	if playerIdx < 0 && len(r.Header.Players) == 1 {
-		playerIdx = 0
-	}
-	if playerIdx < 0 {
-		return
-	}
-
-	username := r.Header.Players[playerIdx].Username
+func (r *Reader) trackScoreActivity(score uint32, username string) {
 	lastScore := r.lastScores[username]
 	delta := int(score) - lastScore
 	r.lastScores[username] = int(score)
